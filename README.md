@@ -140,6 +140,48 @@ regardless of your working directory or how the script is invoked:
 pip install -e . --no-deps
 ```
 
+## Example prompts
+
+Once the server is connected in Claude (Desktop or Code), here are prompts
+that put these tools to use - e.g. pasting a saved listing page or URL
+alongside a question:
+
+**Listing evaluation**
+- "Here's another listing [paste HTML/URL] - is the asking price reasonable
+  for [neighborhood]?"
+- "Compare these two listings I'm considering - which is the better deal
+  per m²?"
+- "This listing has been on the market for 6 months with no price drop - is
+  that normal for this area?"
+
+**Market trend queries**
+- "How has the price per m² in [Cascais/Porto/Setubal] changed over the
+  last 3 years?"
+- "Which municipalities in the Lisbon metro area have seen the fastest
+  price growth in the last year?"
+- "Is Odivelas overheated compared to neighboring municipalities, or still
+  catching up?"
+- "Show me the number of sales trend for [region] - is demand rising or
+  falling?"
+
+**Affordability / investment framing**
+- "If I make €X/year, what price-to-income ratio would a €Y property in
+  [region] represent?"
+- "At current appreciation rates, what might median price/m² in [region]
+  look like in 2 years?"
+
+**Negotiation prep**
+- "Given INE data, what's a defensible opening counter-offer for a
+  property needing [light/full] renovation?"
+- "How much has this specific building's neighborhood repriced since the
+  property was likely bought by the current owner (assume ~2018
+  purchase)?"
+
+**Raw data / verification**
+- "Show me the raw INE API response for [indicator] in [region], no
+  formatting"
+- "List all known indicators this tool can query"
+
 ## Adding more indicators
 
 You don't need to touch code to pull a new INE series - just find its
