@@ -18,6 +18,12 @@ PySpark ingestion layer.
 See [ingestion/indicators.py](ingestion/indicators.py) for the full registry
 (descriptions, frequency, dimension notes).
 
+All four have a `dim_3` breakdown dimension (e.g. buyer origin, dwelling
+category, consumption aggregate). Tools filter to each indicator's
+registered "Total" `dim_3` by default so results aren't silently mixed
+across categories - pass `dim3` explicitly to see a specific breakdown
+instead.
+
 ### Tools
 
 | Tool | Purpose |
@@ -35,6 +41,21 @@ See [ingestion/indicators.py](ingestion/indicators.py) for the full registry
 
 - `ine://indicators` - the known-indicator registry as JSON
 - `ine://indicator/{varcd}` - any indicator's full parsed series as JSON
+
+### A note on INE's API and historical data
+
+INE's `pindica.jsp` endpoint returns exactly one period per call - either
+the latest, or a specific one selected via a `Dim1` period code. There's no
+single call that returns a full time series. So:
+
+- `get_indicator`/`get_median_price_per_m2`/`get_number_of_sales` with no
+  `start_year`/`end_year` do one fetch (latest period only).
+- With a year range, `ine_client.py` looks up the matching period codes via
+  INE's metadata endpoint and fetches each one individually (capped at 60
+  periods per call to keep latency bounded - narrow the range if you hit
+  that).
+- `get_yoy_change` does two fetches: the latest period, then the matching
+  period exactly one year earlier (resolved the same way).
 
 ## Running the server
 

@@ -19,6 +19,7 @@ class IndicatorInfo:
     frequency: str  # "quarterly" | "monthly" | "annual"
     verified: bool
     notes: str = ""
+    default_dim3: str | None = None
 
 
 KNOWN_INDICATORS: dict[str, IndicatorInfo] = {
@@ -31,7 +32,13 @@ KNOWN_INDICATORS: dict[str, IndicatorInfo] = {
         ),
         frequency="quarterly",
         verified=True,
-        notes="dim_3 = domicilio fiscal do comprador (currently always '1' / Territorio nacional).",
+        notes=(
+            "dim_3 = domicilio fiscal do comprador: '1' = Territorio "
+            "nacional, '2' = Estrangeiro, '21' = Uniao Europeia, "
+            "'22' = Restantes paises, 'T' = Total (all buyers). "
+            "Defaults to dim3='T'."
+        ),
+        default_dim3="T",
     ),
     "number_of_sales": IndicatorInfo(
         varcd="0014363",
@@ -41,6 +48,7 @@ KNOWN_INDICATORS: dict[str, IndicatorInfo] = {
         ),
         frequency="quarterly",
         verified=True,
+        notes="No dim_3 dimension for this indicator.",
     ),
     "housing_price_index": IndicatorInfo(
         varcd="0014765",
@@ -52,9 +60,9 @@ KNOWN_INDICATORS: dict[str, IndicatorInfo] = {
         verified=True,
         notes=(
             "dim_3 = categoria do alojamento: 'H1' = Total, "
-            "'H11' = Novos, 'H12' = Existentes. Filter to dim3='H1' "
-            "for the headline index."
+            "'H11' = Novos, 'H12' = Existentes. Defaults to dim3='H1'."
         ),
+        default_dim3="H1",
     ),
     "consumer_price_index": IndicatorInfo(
         varcd="0014640",
@@ -65,12 +73,21 @@ KNOWN_INDICATORS: dict[str, IndicatorInfo] = {
         frequency="monthly",
         verified=True,
         notes=(
-            "dim_3 = agregado especial (e.g. '001' = Total exceto "
-            "habitacao). Level index suitable for deflating nominal "
-            "prices, not a rate of change."
+            "dim_3 = agregado especial: 'T' = Total (headline IPC), "
+            "'001' = Total exceto habitacao (useful to avoid "
+            "circularity when deflating housing prices), plus other "
+            "component breakdowns. Level index, not a rate of change. "
+            "Defaults to dim3='T'."
         ),
+        default_dim3="T",
     ),
 }
+
+
+def default_dim3(name_or_varcd: str) -> str | None:
+    """The registry's default dim_3 filter for a known indicator name, else None."""
+    info = KNOWN_INDICATORS.get(name_or_varcd)
+    return info.default_dim3 if info else None
 
 
 def resolve_varcd(name_or_varcd: str) -> str:
