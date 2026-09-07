@@ -89,6 +89,57 @@ Spark DataFrame that's collected to plain JSON at the tool boundary. A
 `SparkSession` is started lazily on first use (not at import), but that
 first call will still take a few seconds for the JVM to come up.
 
+## Testing the API/MCP server locally
+
+There's no HTTP endpoint to `curl` - this is a stdio-based MCP server - so
+"calling it" means one of the following, in increasing order of how much of
+the stack you exercise:
+
+1. **Call `INEClient` directly** - skips Spark and the MCP layer entirely,
+   fastest way to check the raw INE API response:
+
+   ```bash
+   python -c "from ingestion.ine_client import INEClient; print(INEClient().download('median_price_per_m2'))"
+   ```
+
+2. **Run an entrypoint script** - exercises the full `to_dataframe` path
+   (Spark included) via [entrypoints/main.py](entrypoints/main.py):
+
+   ```bash
+   python entrypoints/main.py
+   ```
+
+   This needs the project importable as a package (see Setup below) since
+   it does `from ingestion.ine_client import INEClient`.
+
+3. **Call an MCP tool function directly in Python** - bypasses the MCP
+   protocol but exercises the same code the server calls:
+
+   ```bash
+   python -c "from entrypoints.mcp_server import get_indicator_raw; print(get_indicator_raw('0012239'))"
+   ```
+
+4. **Run the real MCP server through the Inspector** - the closest thing to
+   how Claude or another MCP client actually calls it, over the real stdio
+   transport:
+
+   ```bash
+   mcp dev entrypoints/mcp_server.py
+   ```
+
+   Opens a local web UI where you can invoke any tool/resource by name.
+
+### Setup for options 2 and 3
+
+`ingestion`/`entrypoints` aren't on `sys.path` by default when a script is
+run directly (Python only adds the script's own directory, not the project
+root). Install the project in editable mode once so imports resolve
+regardless of your working directory or how the script is invoked:
+
+```bash
+pip install -e . --no-deps
+```
+
 ## Adding more indicators
 
 You don't need to touch code to pull a new INE series - just find its
