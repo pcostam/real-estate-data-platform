@@ -1,0 +1,113 @@
+import json
+import os
+import sys
+
+os.environ["PYSPARK_PYTHON"] = sys.executable
+os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
+
+from dataclasses import asdict
+
+from mcp.server.mcpserver import MCPServer
+
+from ingestion import analytics
+from ingestion.indicators import KNOWN_INDICATORS, resolve_varcd
+from ingestion.ine_client import INEClient
+
+mcp = MCPServer("ine-housing-data")
+client = INEClient()
+
+
+def _rows(df) -> list[dict]:
+    return [row.asDict() for row in df.collect()]
+
+
+@mcp.tool()
+def list_known_indicators() -> dict:
+    """List the registry of known INE indicators, with their varcd and verified flag."""
+    return {name: asdict(info) for name, info in KNOWN_INDICATORS.items()}
+
+
+@mcp.tool()
+def get_indicator(
+    varcd: str,
+    region: str | None = None,
+    dim3: str | None = None,
+    start_year: int | None = None,
+    end_year: int | None = None,
+) -> list[dict]:
+    """Fetch any INE indicator by varcd (or by a KNOWN_INDICATORS name), optionally
+    filtered by region name, dim_3 category code, and/or year range."""
+    df = client.to_dataframe(varcd, region=region, dim3=dim3, start_year=start_year, end_year=end_year)
+    return _rows(df)
+
+
+@mcp.tool()
+def get_indicator_raw(varcd: str) -> dict:
+    """Debug tool: return the raw, unparsed INE JSON response for a varcd."""
+    return client.download(varcd)
+
+
+@mcp.tool()
+def get_median_price_per_m2(
+    region: str | None = None,
+    start_year: int | None = None,
+    end_year: int | None = None,
+) -> list[dict]:
+    """Median sale price per m2 of housing (EUR/m2), optionally filtered by region/year range."""
+    df = client.to_dataframe("median_price_per_m2", region=region, start_year=start_year, end_year=end_year)
+    return _rows(df)
+
+
+@mcp.tool()
+def get_number_of_sales(
+    region: str | None = None,
+    start_year: int | None = None,
+    end_year: int | None = None,
+) -> list[dict]:
+    """Number of housing sales in the trailing 12 months, optionally filtered by region/year range."""
+    df = client.to_dataframe("number_of_sales", region=region, start_year=start_year, end_year=end_year)
+    return _rows(df)
+
+
+@mcp.tool()
+def get_yoy_change(indicator: str, region: str | None = None) -> list[dict]:
+    """Year-over-year percent change for an indicator (by varcd or KNOWN_INDICATORS name)."""
+    df = analytics.get_yoy_change(client, indicator, region=region)
+    return _rows(df)
+
+
+@mcp.tool()
+def compare_regions(indicator: str, regions: list[str], period: str = "latest") -> list[dict]:
+    """Side-by-side comparison of an indicator across regions for one period ('latest' by default)."""
+    df = analytics.compare_regions(client, indicator, regions, period=period)
+    return _rows(df)
+
+
+@mcp.tool()
+def compute_price_to_income(
+    price_varcd_or_name: str,
+    income_varcd: str,
+    region: str,
+    dwelling_size_m2: float,
+) -> dict:
+    """Affordability ratio: (price per m2 * dwelling size) / annual income, for a region.
+    You must supply an income indicator's INE varcd — none is registered by default."""
+    return analytics.compute_price_to_income(
+        client, price_varcd_or_name, income_varcd, region, dwelling_size_m2
+    )
+
+
+@mcp.resource("ine://indicators")
+def indicators_resource() -> str:
+    """The known-indicator registry as JSON."""
+    return json.dumps({name: asdict(info) for name, info in KNOWN_INDICATORS.items()}, indent=2)
+
+
+@mcp.resource("ine://indicator/{varcd}")
+def indicator_resource(varcd: str) -> str:
+    """Any indicator's full parsed series (raw INE JSON) by varcd."""
+    return json.dumps(client.download(resolve_varcd(varcd)), indent=2)
+
+
+if __name__ == "__main__":
+    mcp.run()

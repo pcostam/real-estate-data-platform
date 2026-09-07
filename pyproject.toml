@@ -1,0 +1,20 @@
+[project]
+name = "real-estate-data-platform"
+version = "0.1.0"
+description = "INE housing/economic indicator ingestion and MCP server"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "pyspark",
+    "mcp",
+]
+
+[project.scripts]
+real-estate-mcp = "entrypoints.mcp_server:mcp.run"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ingestion*", "entrypoints*"]
