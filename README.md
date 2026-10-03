@@ -59,6 +59,41 @@ single call that returns a full time series. So:
 - `get_yoy_change` does two fetches: the latest period, then the matching
   period exactly one year earlier (resolved the same way).
 
+## Prerequisites
+
+- Python 3.11+
+- A JDK (Java 17+) - PySpark runs on the JVM and won't start without one.
+  Set `JAVA_HOME` to point at it.
+
+### Windows-specific setup
+
+PySpark's Hadoop layer expects a Windows-native `winutils.exe`/`hadoop.dll`
+even though this project never touches HDFS. Without it, `SparkSession`
+creation fails (or hangs) with errors like
+`Could not locate executable null\bin\winutils.exe`.
+
+1. Install a JDK (e.g. [Eclipse Temurin](https://adoptium.net/)) and set
+   `JAVA_HOME` to its install directory, e.g.:
+
+   ```powershell
+   setx JAVA_HOME "C:\Program Files\Eclipse Adoptium\jdk-17.0.x-hotspot"
+   ```
+
+2. Download a `winutils.exe` build matching your Hadoop version (the one
+   bundled with the pinned `pyspark==4.2.0` - search
+   `winutils <hadoop-version>`, e.g. from
+   [cdarlint/winutils](https://github.com/cdarlint/winutils)) and place it
+   (plus `hadoop.dll`) under `C:\hadoop\bin\`.
+3. Set `HADOOP_HOME` to that folder and add it to `PATH`:
+
+   ```powershell
+   setx HADOOP_HOME "C:\hadoop"
+   setx PATH "%PATH%;%HADOOP_HOME%\bin"
+   ```
+
+4. Open a **new** terminal (env vars set via `setx` only apply to new
+   sessions) before running the server or tests.
+
 ## Running the server
 
 ```bash
