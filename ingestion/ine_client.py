@@ -1,13 +1,112 @@
+import os
 import re
+import threading
+import time
 
 import requests
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
+from requests.adapters import HTTPAdapter
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ingestion.indicators import default_dim3, resolve_varcd
 
 INE_INDICATOR_URL = "https://www.ine.pt/ine/json_indicador/pindica.jsp?op=2&varcd={varcd}&lang=PT"
 INE_META_URL = "https://www.ine.pt/ine/json_indicador/pindicaMeta.jsp?varcd={varcd}&lang=PT"
+
+# Conservative, shared-citizen defaults for calling INE's public API. Every
+# process using this client (including everyone else's, if this code is
+# reused) throttles itself independently -- there's no central coordinator,
+# so each instance must stay well under what a single IP could get away
+# with. Overridable via env vars for anyone who knows their situation allows
+# more (or needs less).
+_MAX_REQUESTS_PER_SECOND = float(os.environ.get("INE_MAX_REQUESTS_PER_SECOND", "8"))
+_MAX_CONCURRENT_REQUESTS = int(os.environ.get("INE_MAX_CONCURRENT_REQUESTS", "10"))
+
+
+class _RateLimiter:
+    """Thread-safe token bucket (request rate) + semaphore (concurrency cap).
+
+    Shared across all INEClient instances in a process so the ceiling holds
+    even if callers create multiple clients.
+    """
+
+    def __init__(self, max_per_second: float, max_concurrent: int):
+        self._rate = max_per_second
+        self._tokens = max_per_second
+        self._last_refill = time.monotonic()
+        self._lock = threading.Lock()
+        self._concurrency = threading.Semaphore(max_concurrent)
+
+    def __enter__(self):
+        self._concurrency.acquire()
+        with self._lock:
+            while True:
+                now = time.monotonic()
+                self._tokens = min(
+                    self._rate, self._tokens + (now - self._last_refill) * self._rate
+                )
+                self._last_refill = now
+                if self._tokens >= 1:
+                    self._tokens -= 1
+                    return self
+                time.sleep((1 - self._tokens) / self._rate)
+
+    def __exit__(self, *exc_info):
+        self._concurrency.release()
+
+
+_rate_limiter = _RateLimiter(_MAX_REQUESTS_PER_SECOND, _MAX_CONCURRENT_REQUESTS)
+
+
+def _is_retryable_http_error(exc: BaseException) -> bool:
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status == 429 or (status is not None and 500 <= status < 600)
+
+
+def _retry_after_seconds(exc: BaseException) -> float | None:
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    value = response.headers.get("Retry-After")
+    try:
+        return float(value) if value is not None else None
+    except ValueError:
+        return None
+
+
+def _wait_respecting_retry_after(retry_state):
+    exc = retry_state.outcome.exception()
+    retry_after = _retry_after_seconds(exc) if exc else None
+    if retry_after is not None:
+        return retry_after
+    return wait_exponential(multiplier=1, min=1, max=30)(retry_state)
+
+
+def _make_session() -> requests.Session:
+    session = requests.Session()
+    adapter = HTTPAdapter(pool_connections=_MAX_CONCURRENT_REQUESTS, pool_maxsize=_MAX_CONCURRENT_REQUESTS)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_session = _make_session()
+
+
+@retry(
+    retry=retry_if_exception(
+        lambda exc: isinstance(exc, requests.exceptions.HTTPError) and _is_retryable_http_error(exc)
+    ),
+    wait=_wait_respecting_retry_after,
+    stop=stop_after_attempt(5),
+    reraise=True,
+)
+def _get(url: str) -> requests.Response:
+    with _rate_limiter:
+        response = _session.get(url, timeout=30)
+    response.raise_for_status()
+    return response
 
 # INE's Dim1 (period) ordinal codes are YYYYMMDD-shaped, with MM/DD fixed
 # per periodicity (e.g. quarters start 01/04/07/10-01). Subtracting exactly
@@ -67,8 +166,7 @@ class INEClient:
         url = INE_INDICATOR_URL.format(varcd=varcd)
         if dim1:
             url += f"&Dim1={dim1}"
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
+        response = _get(url)
 
         return response.json()[0]
 
@@ -77,8 +175,7 @@ class INEClient:
         cat_id, label, and a sortable ordinal (YYYYMMDD-shaped int)."""
         varcd = resolve_varcd(name_or_varcd)
         url = INE_META_URL.format(varcd=varcd)
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
+        response = _get(url)
         data = response.json()[0]
 
         periods = []

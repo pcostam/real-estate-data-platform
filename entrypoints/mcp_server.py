@@ -97,6 +97,20 @@ def compute_price_to_income(
     )
 
 
+@mcp.tool()
+def get_buyer_origin_premium(
+    region: str,
+    start_year: int | None = None,
+    end_year: int | None = None,
+) -> list[dict]:
+    """Per-period % premium foreign buyers pay over national buyers on
+    median_price_per_m2 in a region (foreign vs national dim_3 categories).
+    A price-gap proxy, not a foreign-buyer share -- INE publishes no
+    transaction volume split by buyer origin, only median price paid."""
+    df = analytics.compute_buyer_origin_premium(client, region, start_year=start_year, end_year=end_year)
+    return _rows(df)
+
+
 @mcp.resource("ine://indicators")
 def indicators_resource() -> str:
     """The known-indicator registry as JSON."""

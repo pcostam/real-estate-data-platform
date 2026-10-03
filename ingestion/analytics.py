@@ -57,6 +57,58 @@ def compare_regions(client: INEClient, indicator: str, regions: list[str], perio
     return df.filter(col("geo_name").isin(regions))
 
 
+def compute_buyer_origin_premium(
+    client: INEClient,
+    region: str,
+    price_varcd_or_name: str = "median_price_per_m2",
+    foreign_dim3: str = "2",
+    national_dim3: str = "1",
+    start_year: int | None = None,
+    end_year: int | None = None,
+):
+    """Per-period % premium foreign buyers pay over national buyers for the
+    same indicator/region (foreign_price - national_price) / national_price.
+
+    This is a price-gap signal, not a foreign-buyer *share*: INE does not
+    publish transaction counts/volume split by buyer origin for this
+    indicator, only the median price paid by each group. A widening premium
+    is a candidate speculation-adjacent proxy (e.g. foreign demand bidding
+    up a segment faster than the local market) -- not a validated detector,
+    since the same pattern could just mean foreign buyers purchase larger
+    or better-located units on average.
+    """
+    national_df = client.to_dataframe(
+        price_varcd_or_name, region=region, dim3=national_dim3,
+        start_year=start_year, end_year=end_year,
+    )
+    foreign_df = client.to_dataframe(
+        price_varcd_or_name, region=region, dim3=foreign_dim3,
+        start_year=start_year, end_year=end_year,
+    )
+
+    national = national_df.select(
+        col("year"), col("sub_period"), col("period"),
+        col("value").cast("double").alias("national_price_per_m2"),
+    )
+    foreign = foreign_df.select(
+        col("year").alias("f_year"), col("sub_period").alias("f_sub_period"),
+        col("value").cast("double").alias("foreign_price_per_m2"),
+    )
+
+    joined = national.join(
+        foreign,
+        (national.year == foreign.f_year) & (national.sub_period.eqNullSafe(foreign.f_sub_period)),
+        "inner",
+    )
+
+    return joined.select(
+        col("period"), col("year"), col("sub_period"),
+        col("national_price_per_m2"), col("foreign_price_per_m2"),
+        ((col("foreign_price_per_m2") - col("national_price_per_m2"))
+         / col("national_price_per_m2") * 100).alias("foreign_premium_pct"),
+    ).orderBy(col("year"), col("sub_period"))
+
+
 def compute_price_to_income(
     client: INEClient,
     price_varcd_or_name: str,
