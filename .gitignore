@@ -7,3 +7,16 @@ build/
 dist/
 .pytest_cache/
 .ipynb_checkpoints/
+APIs/
+Bronze/
+Config/
+Dashboards/
+Data_Quality/
+Delta_Tables/
+Docs/
+ingestion/Banco_de_Portugal
+ingestion/Euribor
+ingestion/Eurostat
+ingestion/PORDATA
+Silver/
+Spark_Jobs/
