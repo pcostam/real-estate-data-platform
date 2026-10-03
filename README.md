@@ -64,6 +64,23 @@ pip install -r requirements.txt
 python entrypoints/mcp_server.py
 ```
 
+### Using it from Claude Code
+
+This repo's [.mcp.json](.mcp.json) is checked in (project scope), so cloning
+the repo is enough for Claude Code to pick up the `ine-housing-data` server
+automatically - no manual `claude mcp add` needed. It points at
+`.venv/Scripts/python.exe` (a relative path, resolved from the repo root), so
+create the venv there first:
+
+```bash
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+```
+
+On macOS/Linux, create the venv the same way but update `.mcp.json`'s
+`command` to `.venv/bin/python` instead (the `Scripts/python.exe` path is
+Windows-specific).
+
 Or, for local development with the MCP inspector:
 
 ```bash

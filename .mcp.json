@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "ine-housing-data": {
-      "command": "C:/Users/anama/real-estate-data-platform/.venv/Scripts/python.exe",
+      "command": ".venv/Scripts/python.exe",
       "args": ["entrypoints/mcp_server.py"]
     }
   }
