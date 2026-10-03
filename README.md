@@ -4,6 +4,8 @@ An MCP server exposing Portuguese housing and economic indicators from
 [INE](https://www.ine.pt) (Instituto Nacional de Estatistica), backed by a
 PySpark ingestion layer.
 
+![Architecture overview](assets/architecture_diagram.svg)
+
 ## What's included
 
 ### Verified indicators
