@@ -87,26 +87,42 @@ def compute_buyer_origin_premium(
     )
 
     national = national_df.select(
+        col("geo_code"), col("geo_name"),
         col("year"), col("sub_period"), col("period"),
         col("value").cast("double").alias("national_price_per_m2"),
     )
     foreign = foreign_df.select(
+        col("geo_code").alias("f_geo_code"),
         col("year").alias("f_year"), col("sub_period").alias("f_sub_period"),
         col("value").cast("double").alias("foreign_price_per_m2"),
     )
 
     joined = national.join(
         foreign,
-        (national.year == foreign.f_year) & (national.sub_period.eqNullSafe(foreign.f_sub_period)),
+        (national.geo_code == foreign.f_geo_code)
+        & (national.year == foreign.f_year)
+        & (national.sub_period.eqNullSafe(foreign.f_sub_period)),
         "inner",
     )
 
     return joined.select(
+        col("geo_code"), col("geo_name"),
         col("period"), col("year"), col("sub_period"),
         col("national_price_per_m2"), col("foreign_price_per_m2"),
         ((col("foreign_price_per_m2") - col("national_price_per_m2"))
          / col("national_price_per_m2") * 100).alias("foreign_premium_pct"),
-    ).orderBy(col("year"), col("sub_period"))
+    ).orderBy(col("geo_code"), col("year"), col("sub_period"))
+
+
+def _single_row(df, label: str):
+    rows = df.take(2)
+    if not rows:
+        raise ValueError(f"No data for {label}")
+    if len(rows) > 1:
+        raise ValueError(
+            f"Multiple rows for {label}; the series is ambiguous (e.g. several dim_3 categories)"
+        )
+    return rows[0]
 
 
 def compute_price_to_income(
@@ -118,21 +134,22 @@ def compute_price_to_income(
 ) -> dict:
     """Price-to-income ratio: (price per m2 * dwelling size) / annual income,
     using the latest available period for each series in the given region."""
-    price_row = client.to_dataframe(price_varcd_or_name, region=region).take(1)
-    income_row = client.to_dataframe(income_varcd, region=region).take(1)
+    price_row = _single_row(
+        client.to_dataframe(price_varcd_or_name, region=region),
+        f"{price_varcd_or_name!r} in region {region!r}",
+    )
+    income_row = _single_row(
+        client.to_dataframe(income_varcd, region=region),
+        f"income indicator {income_varcd!r} in region {region!r}",
+    )
 
-    if not price_row:
-        raise ValueError(f"No data for {price_varcd_or_name!r} in region {region!r}")
-    if not income_row:
-        raise ValueError(f"No data for income indicator {income_varcd!r} in region {region!r}")
-
-    price_per_m2 = float(price_row[0]["value"])
-    annual_income = float(income_row[0]["value"])
+    price_per_m2 = float(price_row["value"])
+    annual_income = float(income_row["value"])
 
     return {
         "region": region,
-        "price_period": price_row[0]["period"],
-        "income_period": income_row[0]["period"],
+        "price_period": price_row["period"],
+        "income_period": income_row["period"],
         "price_per_m2": price_per_m2,
         "dwelling_size_m2": dwelling_size_m2,
         "annual_income": annual_income,

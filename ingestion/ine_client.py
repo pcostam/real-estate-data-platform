@@ -2,17 +2,20 @@ import os
 import re
 import threading
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import requests
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
+from pyspark.sql.types import LongType, StringType, StructField, StructType
 from requests.adapters import HTTPAdapter
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ingestion.indicators import default_dim3, resolve_varcd
 
-INE_INDICATOR_URL = "https://www.ine.pt/ine/json_indicador/pindica.jsp?op=2&varcd={varcd}&lang=PT"
-INE_META_URL = "https://www.ine.pt/ine/json_indicador/pindicaMeta.jsp?varcd={varcd}&lang=PT"
+INE_INDICATOR_URL = "https://www.ine.pt/ine/json_indicador/pindica.jsp"
+INE_META_URL = "https://www.ine.pt/ine/json_indicador/pindicaMeta.jsp"
 
 # Conservative, shared-citizen defaults for calling INE's public API. Every
 # process using this client (including everyone else's, if this code is
@@ -22,6 +25,22 @@ INE_META_URL = "https://www.ine.pt/ine/json_indicador/pindicaMeta.jsp?varcd={var
 # more (or needs less).
 _MAX_REQUESTS_PER_SECOND = float(os.environ.get("INE_MAX_REQUESTS_PER_SECOND", "8"))
 _MAX_CONCURRENT_REQUESTS = int(os.environ.get("INE_MAX_CONCURRENT_REQUESTS", "10"))
+
+
+# Explicit schema: INE omits fields like dim_3 entirely for indicators without
+# that breakdown, and Spark can't infer the type of an all-None column.
+_ROW_SCHEMA = StructType([
+    StructField("indicator", StringType()),
+    StructField("period", StringType()),
+    StructField("year", LongType()),
+    StructField("sub_period", LongType()),
+    StructField("geo_code", StringType()),
+    StructField("geo_name", StringType()),
+    StructField("dim_3", StringType()),
+    StructField("dim_3_label", StringType()),
+    StructField("value", StringType()),
+    StructField("display_value", StringType()),
+])
 
 
 class _RateLimiter:
@@ -40,6 +59,16 @@ class _RateLimiter:
 
     def __enter__(self):
         self._concurrency.acquire()
+        try:
+            self._take_token()
+        except BaseException:
+            # __exit__ won't run if __enter__ raises (e.g. KeyboardInterrupt
+            # mid-sleep), so give the permit back here or it leaks for good.
+            self._concurrency.release()
+            raise
+        return self
+
+    def _take_token(self):
         with self._lock:
             while True:
                 now = time.monotonic()
@@ -49,7 +78,7 @@ class _RateLimiter:
                 self._last_refill = now
                 if self._tokens >= 1:
                     self._tokens -= 1
-                    return self
+                    return
                 time.sleep((1 - self._tokens) / self._rate)
 
     def __exit__(self, *exc_info):
@@ -69,10 +98,20 @@ def _retry_after_seconds(exc: BaseException) -> float | None:
     if response is None:
         return None
     value = response.headers.get("Retry-After")
-    try:
-        return float(value) if value is not None else None
-    except ValueError:
+    if value is None:
         return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    # RFC 7231 also allows an HTTP-date, e.g. "Wed, 21 Oct 2015 07:28:00 GMT".
+    try:
+        retry_at = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
 
 
 def _wait_respecting_retry_after(retry_state):
@@ -102,9 +141,9 @@ _session = _make_session()
     stop=stop_after_attempt(5),
     reraise=True,
 )
-def _get(url: str) -> requests.Response:
+def _get(url: str, params: dict[str, str]) -> requests.Response:
     with _rate_limiter:
-        response = _session.get(url, timeout=30)
+        response = _session.get(url, params=params, timeout=30)
     response.raise_for_status()
     return response
 
@@ -163,10 +202,10 @@ class INEClient:
         """Fetch one period of an indicator: the latest, or a specific one
         via `dim1` (an INE period cat_id from get_metadata(), e.g. 'S5A20251')."""
         varcd = resolve_varcd(name_or_varcd)
-        url = INE_INDICATOR_URL.format(varcd=varcd)
+        params = {"op": "2", "varcd": varcd, "lang": "PT"}
         if dim1:
-            url += f"&Dim1={dim1}"
-        response = _get(url)
+            params["Dim1"] = dim1
+        response = _get(INE_INDICATOR_URL, params)
 
         return response.json()[0]
 
@@ -174,8 +213,7 @@ class INEClient:
         """Fetch indicator metadata, including every valid period's Dim1
         cat_id, label, and a sortable ordinal (YYYYMMDD-shaped int)."""
         varcd = resolve_varcd(name_or_varcd)
-        url = INE_META_URL.format(varcd=varcd)
-        response = _get(url)
+        response = _get(INE_META_URL, {"varcd": varcd, "lang": "PT"})
         data = response.json()[0]
 
         periods = []
@@ -273,14 +311,27 @@ class INEClient:
             payloads = [self.download(name_or_varcd, dim1=p["cat_id"]) for p in selected]
 
         rows = [row for payload in payloads for row in self._rows_from_payload(payload)]
-        df = self.spark.createDataFrame(rows)
+        if not rows:
+            raise ValueError(f"INE returned no data for {name_or_varcd!r}")
 
+        # Filter before building the DataFrame so an empty result is caught
+        # here, with an error naming the filter that emptied it.
         if region is not None:
-            df = self.filter_region(df, region)
+            rows = [r for r in rows if r["geo_name"] == region]
+            if not rows:
+                raise ValueError(f"No data for {name_or_varcd!r} in region {region!r}")
         if dim3 is not None:
-            df = df.filter(col("dim_3") == dim3)
+            available = sorted({r["dim_3"] for r in rows if r["dim_3"] is not None})
+            rows = [r for r in rows if r["dim_3"] == dim3]
+            if not rows:
+                raise ValueError(
+                    f"No data for {name_or_varcd!r} with dim3={dim3!r}"
+                    + (f" in region {region!r}" if region is not None else "")
+                    + (f"; available dim3 values: {available}" if available
+                       else "; this indicator has no dim_3 breakdown")
+                )
 
-        return df
+        return self.spark.createDataFrame(rows, schema=_ROW_SCHEMA)
 
     @staticmethod
     def filter_region(df, region):

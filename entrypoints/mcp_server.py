@@ -1,16 +1,10 @@
 import json
-import os
-import sys
-
-os.environ["PYSPARK_PYTHON"] = sys.executable
-os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
-
 from dataclasses import asdict
 
 from mcp.server.mcpserver import MCPServer
 
 from ingestion import analytics
-from ingestion.indicators import KNOWN_INDICATORS, resolve_varcd
+from ingestion.indicators import KNOWN_INDICATORS
 from ingestion.ine_client import INEClient
 
 mcp = MCPServer("ine-housing-data")
@@ -120,7 +114,7 @@ def indicators_resource() -> str:
 @mcp.resource("ine://indicator/{varcd}")
 def indicator_resource(varcd: str) -> str:
     """Any indicator's full parsed series (raw INE JSON) by varcd."""
-    return json.dumps(client.download(resolve_varcd(varcd)), indent=2)
+    return json.dumps(client.download(varcd), indent=2)
 
 
 if __name__ == "__main__":

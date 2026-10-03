@@ -10,13 +10,20 @@ To find a new varcd: ine.pt -> Bases de Dados -> search for the series
 """
 
 from dataclasses import dataclass
+from enum import Enum
+
+
+class Frequency(str, Enum):
+    QUARTERLY = "quarterly"
+    MONTHLY = "monthly"
+    ANNUAL = "annual"
 
 
 @dataclass(frozen=True)
 class IndicatorInfo:
     varcd: str
     description: str
-    frequency: str  # "quarterly" | "monthly" | "annual"
+    frequency: Frequency
     verified: bool
     notes: str = ""
     default_dim3: str | None = None
@@ -30,7 +37,7 @@ KNOWN_INDICATORS: dict[str, IndicatorInfo] = {
             "(Metodologia 2022 - EUR/m2) por NUTS e domicilio fiscal "
             "do comprador"
         ),
-        frequency="quarterly",
+        frequency=Frequency.QUARTERLY,
         verified=True,
         notes=(
             "dim_3 = domicilio fiscal do comprador: '1' = Territorio "
@@ -46,7 +53,7 @@ KNOWN_INDICATORS: dict[str, IndicatorInfo] = {
             "Vendas de alojamentos familiares nos ultimos 12 meses "
             "(Metodologia 2022 - N.) por NUTS"
         ),
-        frequency="quarterly",
+        frequency=Frequency.QUARTERLY,
         verified=True,
         notes="No dim_3 dimension for this indicator.",
     ),
@@ -56,7 +63,7 @@ KNOWN_INDICATORS: dict[str, IndicatorInfo] = {
             "Indice de precos da habitacao / IPHab (Base - 2025) por "
             "categoria do alojamento familiar"
         ),
-        frequency="quarterly",
+        frequency=Frequency.QUARTERLY,
         verified=True,
         notes=(
             "dim_3 = categoria do alojamento: 'H1' = Total, "
@@ -70,7 +77,7 @@ KNOWN_INDICATORS: dict[str, IndicatorInfo] = {
             "Indice de precos no consumidor / IPC (Base - 2025) por "
             "localizacao geografica e agregados especiais"
         ),
-        frequency="monthly",
+        frequency=Frequency.MONTHLY,
         verified=True,
         notes=(
             "dim_3 = agregado especial: 'T' = Total (headline IPC), "
