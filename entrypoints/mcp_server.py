@@ -1,6 +1,9 @@
 import functools
 import json
+import logging
 from dataclasses import asdict
+
+import requests
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -11,13 +14,17 @@ from ingestion.ine_client import INEClient
 
 mcp = MCPServer("ine-housing-data")
 client = INEClient()
+logger = logging.getLogger(__name__)
 
 
 def _expected_errors(fn):
-    """Re-raise ValueError as ToolError so the model sees the message.
+    """Re-raise ValueError and INE request failures as ToolError so the model
+    sees the message.
 
     MCPServer treats any other exception as a crash and returns only
-    `Error executing tool <name>`, hiding e.g. "no data in region X".
+    `Error executing tool <name>`, hiding e.g. "no data in region X". Those
+    unexpected exceptions are logged with their traceback to stderr (stdout
+    carries the MCP protocol) so they can still be diagnosed.
     """
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
@@ -25,6 +32,13 @@ def _expected_errors(fn):
             return fn(*args, **kwargs)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
+        except requests.exceptions.RequestException as exc:
+            raise ToolError(
+                f"Request to INE failed after retries ({type(exc).__name__}): {exc}"
+            ) from exc
+        except Exception:
+            logger.exception("Unexpected error in tool %s", fn.__name__)
+            raise
     return wrapper
 
 

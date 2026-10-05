@@ -24,8 +24,14 @@ INE_META_URL = "https://www.ine.pt/ine/json_indicador/pindicaMeta.jsp"
 # so each instance must stay well under what a single IP could get away
 # with. Overridable via env vars for anyone who knows their situation allows
 # more (or needs less).
-_MAX_REQUESTS_PER_SECOND = float(os.environ.get("INE_MAX_REQUESTS_PER_SECOND", "8"))
+_MAX_REQUESTS_PER_SECOND = float(os.environ.get("INE_MAX_REQUESTS_PER_SECOND", "2"))
 _MAX_CONCURRENT_REQUESTS = int(os.environ.get("INE_MAX_CONCURRENT_REQUESTS", "10"))
+
+# (connect, read) seconds. A short connect timeout fails fast when INE is
+# unreachable (it drops connections rather than refusing them), so five
+# retry attempts don't leave a call hanging for minutes; reads keep a
+# longer budget since large indicator payloads can be slow.
+_REQUEST_TIMEOUT = (10, 30)
 
 
 # Explicit schema: INE omits fields like dim_3 entirely for indicators without
@@ -94,6 +100,14 @@ def _is_retryable_http_error(exc: BaseException) -> bool:
     return status == 429 or (status is not None and 500 <= status < 600)
 
 
+def _is_retryable_error(exc: BaseException) -> bool:
+    # Dropped connections and timeouts are as transient as a 5xx; without
+    # this, one blip fails a multi-period fetch outright.
+    if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+        return True
+    return isinstance(exc, requests.exceptions.HTTPError) and _is_retryable_http_error(exc)
+
+
 def _retry_after_seconds(exc: BaseException) -> float | None:
     response = getattr(exc, "response", None)
     if response is None:
@@ -135,16 +149,14 @@ _session = _make_session()
 
 
 @retry(
-    retry=retry_if_exception(
-        lambda exc: isinstance(exc, requests.exceptions.HTTPError) and _is_retryable_http_error(exc)
-    ),
+    retry=retry_if_exception(_is_retryable_error),
     wait=_wait_respecting_retry_after,
     stop=stop_after_attempt(5),
     reraise=True,
 )
 def _get(url: str, params: dict[str, str]) -> requests.Response:
     with _rate_limiter:
-        response = _session.get(url, params=params, timeout=30)
+        response = _session.get(url, params=params, timeout=_REQUEST_TIMEOUT)
     response.raise_for_status()
     return response
 

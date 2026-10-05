@@ -2,8 +2,10 @@ from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 
 import pytest
+import requests
 
-from ingestion.ine_client import INEClient, _retry_after_seconds, parse_period
+from ingestion import ine_client
+from ingestion.ine_client import INEClient, _is_retryable_error, _retry_after_seconds, parse_period
 
 
 @pytest.mark.parametrize(
@@ -158,3 +160,40 @@ def test_retry_after_http_date_in_past_is_zero():
 @pytest.mark.parametrize("value", [None, "soon", ""])
 def test_retry_after_missing_or_unparseable(value):
     assert _retry_after_seconds(_FakeHTTPError(value)) is None
+
+
+def _http_error(status):
+    response = requests.Response()
+    response.status_code = status
+    return requests.exceptions.HTTPError(response=response)
+
+
+@pytest.mark.parametrize("exc, expected", [
+    (requests.exceptions.ConnectionError(), True),
+    (requests.exceptions.ReadTimeout(), True),
+    (requests.exceptions.ConnectTimeout(), True),
+    (_http_error(429), True),
+    (_http_error(503), True),
+    (_http_error(404), False),
+    (ValueError(), False),
+])
+def test_is_retryable_error(exc, expected):
+    assert _is_retryable_error(exc) is expected
+
+
+def test_get_retries_after_dropped_connection(monkeypatch):
+    calls = []
+    ok = requests.Response()
+    ok.status_code = 200
+
+    def flaky_get(url, params, timeout):
+        calls.append(url)
+        if len(calls) == 1:
+            raise requests.exceptions.ConnectionError("connection reset")
+        return ok
+
+    monkeypatch.setattr(ine_client._session, "get", flaky_get)
+    monkeypatch.setattr(ine_client._get.retry, "sleep", lambda _seconds: None)
+
+    assert ine_client._get("https://example.invalid", {}) is ok
+    assert len(calls) == 2
