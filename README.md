@@ -38,6 +38,7 @@ instead.
 | `get_yoy_change(indicator, region)` | Year-over-year % change |
 | `compare_regions(indicator, regions, period)` | Side-by-side region comparison |
 | `compute_price_to_income(price_varcd_or_name, income_varcd, region, dwelling_size_m2)` | Affordability ratio - you supply an income indicator's varcd |
+| `get_listing_price_context(html_path, start_year, end_year)` | Parse a saved idealista listing page and return its location plus the municipality's median price per m2 (INE has no parish-level prices) |
 
 ### Resources
 

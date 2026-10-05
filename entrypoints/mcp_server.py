@@ -144,6 +144,26 @@ def get_buyer_origin_premium(
     return _rows(df)
 
 
+@mcp.tool()
+@_expected_errors
+def get_listing_price_context(
+    html_path: str,
+    start_year: int | None = None,
+    end_year: int | None = None,
+) -> dict:
+    """Parse a saved idealista listing page (local .html path) and return its
+    street/neighbourhood/parish/municipality plus INE median price per m2 for
+    the municipality. The price is municipality-level -- INE has no parish
+    prices. parish_mismatch flags when the agency's link names a different
+    parish than idealista does."""
+    try:
+        with open(html_path, encoding="utf-8") as f:
+            html = f.read()
+    except OSError as exc:
+        raise ValueError(f"Cannot read listing page {html_path!r}: {exc}") from exc
+    return analytics.get_listing_price_context(client, html, start_year=start_year, end_year=end_year)
+
+
 @mcp.resource("ine://indicators")
 def indicators_resource() -> str:
     """The known-indicator registry as JSON."""

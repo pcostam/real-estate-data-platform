@@ -8,6 +8,7 @@ dependencies = [
     "pyspark",
     "mcp",
     "tenacity",
+    "beautifulsoup4",
 ]
 
 [project.optional-dependencies]

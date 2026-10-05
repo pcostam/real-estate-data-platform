@@ -1,6 +1,11 @@
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, length
 
+from ingestion.idealista_parser import parse_listing_location
 from ingestion.ine_client import INEClient
+
+# INE municipality geo_codes are 7 characters (NUTS prefix + 4-digit DICOFRE,
+# e.g. Lisboa = "1A01106"); NUTS regions use shorter codes.
+_MUNICIPALITY_GEO_CODE_LEN = 7
 
 
 def get_yoy_change(client: INEClient, indicator: str, region: str | None = None):
@@ -154,4 +159,49 @@ def compute_price_to_income(
         "dwelling_size_m2": dwelling_size_m2,
         "annual_income": annual_income,
         "price_to_income_ratio": (price_per_m2 * dwelling_size_m2) / annual_income,
+    }
+
+
+def get_listing_price_context(
+    client: INEClient,
+    listing_html: str,
+    start_year: int | None = None,
+    end_year: int | None = None,
+) -> dict:
+    """Location of a saved idealista listing plus INE median_price_per_m2 for
+    its municipality (latest period, or a year range).
+
+    INE publishes this indicator down to municipality level only, so the
+    price is the municipality's, never the listing's parish.
+    """
+    location = parse_listing_location(listing_html)
+    df = client.to_dataframe(
+        "median_price_per_m2", region=location.municipality,
+        start_year=start_year, end_year=end_year,
+    )
+    df = df.filter(length(col("geo_code")) == _MUNICIPALITY_GEO_CODE_LEN)
+    prices = [
+        {
+            "period": r["period"],
+            "geo_code": r["geo_code"],
+            "geo_name": r["geo_name"],
+            "price_per_m2": float(r["value"]),
+        }
+        for r in df.orderBy(col("year"), col("sub_period")).collect()
+    ]
+    if not prices:
+        raise ValueError(
+            f"No municipality-level median_price_per_m2 for {location.municipality!r}"
+        )
+
+    return {
+        "ad_id": location.ad_id,
+        "street": location.street,
+        "neighbourhood": location.neighbourhood,
+        "parish": location.parish,
+        "municipality": location.municipality,
+        "agency_parish": location.agency_parish,
+        "parish_mismatch": location.parish_mismatch,
+        "price_geography": "municipality",
+        "prices": prices,
     }

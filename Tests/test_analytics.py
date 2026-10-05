@@ -1,6 +1,10 @@
 import pytest
 
-from ingestion.analytics import compute_buyer_origin_premium, compute_price_to_income
+from ingestion.analytics import (
+    compute_buyer_origin_premium,
+    compute_price_to_income,
+    get_listing_price_context,
+)
 
 LISBOA_ROWS = [
     {"indicator": "0012239", "period": "1.º Trimestre de 2024", "year": 2024, "sub_period": 1,
@@ -103,3 +107,73 @@ def test_compute_buyer_origin_premium_drops_periods_missing_either_side(spark):
     periods = {r["period"] for r in df.collect()}
 
     assert periods == {"1.º Trimestre de 2024", "2.º Trimestre de 2024"}
+
+
+LISTING_HTML = (
+    '<html><body><input type="hidden" name="adId" value="35366924">'
+    '<div id="headerMap"><ul>'
+    '<li class="header-map-list">Rua Aliança Operária Nn</li>'
+    '<li class="header-map-list">District Alto de Alcântara</li>'
+    '<li class="header-map-list">Alcântara</li>'
+    '<li class="header-map-list">Lisbon</li>'
+    '</ul></div>'
+    '<a id="agencyExternalLink" '
+    'href="https://www.kwportugal.pt/imovel/Venda/Apartamento/Lisboa/Lisboa/Ajuda/85324">x</a>'
+    '</body></html>'
+)
+
+
+def _price_row(geo_code, geo_name, value, sub_period=1):
+    return {
+        "indicator": "0012239", "period": f"{sub_period}.º Trimestre de 2026", "year": 2026,
+        "sub_period": sub_period, "geo_code": geo_code, "geo_name": geo_name,
+        "dim_3": "T", "dim_3_label": "Total", "value": value, "display_value": str(value),
+    }
+
+
+def test_get_listing_price_context_uses_municipality_price(spark):
+    client = FakeINEClient(spark, [
+        _price_row("1A01106", "Lisboa", 5292.0),
+        _price_row("11A1312", "Porto", 3729.0),
+    ])
+
+    result = get_listing_price_context(client, LISTING_HTML)
+
+    assert result["parish"] == "Alcântara"
+    assert result["municipality"] == "Lisboa"
+    assert result["agency_parish"] == "Ajuda"
+    assert result["parish_mismatch"] is True
+    assert result["price_geography"] == "municipality"
+    assert result["prices"] == [{
+        "period": "1.º Trimestre de 2026", "geo_code": "1A01106",
+        "geo_name": "Lisboa", "price_per_m2": 5292.0,
+    }]
+
+
+def test_get_listing_price_context_ignores_same_named_nuts_region(spark):
+    client = FakeINEClient(spark, [
+        _price_row("1A01106", "Lisboa", 5292.0),
+        _price_row("1A0", "Lisboa", 9999.0),
+    ])
+
+    result = get_listing_price_context(client, LISTING_HTML)
+
+    assert [p["geo_code"] for p in result["prices"]] == ["1A01106"]
+
+
+def test_get_listing_price_context_orders_periods(spark):
+    client = FakeINEClient(spark, [
+        _price_row("1A01106", "Lisboa", 5300.0, sub_period=2),
+        _price_row("1A01106", "Lisboa", 5292.0, sub_period=1),
+    ])
+
+    result = get_listing_price_context(client, LISTING_HTML, start_year=2026, end_year=2026)
+
+    assert [p["price_per_m2"] for p in result["prices"]] == [5292.0, 5300.0]
+
+
+def test_get_listing_price_context_raises_without_municipality_row(spark):
+    client = FakeINEClient(spark, [_price_row("1A0", "Lisboa", 9999.0)])
+
+    with pytest.raises(ValueError, match="No municipality-level"):
+        get_listing_price_context(client, LISTING_HTML)
