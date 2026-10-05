@@ -1,7 +1,9 @@
+import functools
 import json
 from dataclasses import asdict
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from ingestion import analytics
 from ingestion.indicators import KNOWN_INDICATORS
@@ -9,6 +11,21 @@ from ingestion.ine_client import INEClient
 
 mcp = MCPServer("ine-housing-data")
 client = INEClient()
+
+
+def _expected_errors(fn):
+    """Re-raise ValueError as ToolError so the model sees the message.
+
+    MCPServer treats any other exception as a crash and returns only
+    `Error executing tool <name>`, hiding e.g. "no data in region X".
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+    return wrapper
 
 
 def _rows(df) -> list[dict]:
@@ -22,6 +39,7 @@ def list_known_indicators() -> dict:
 
 
 @mcp.tool()
+@_expected_errors
 def get_indicator(
     varcd: str,
     region: str | None = None,
@@ -36,12 +54,14 @@ def get_indicator(
 
 
 @mcp.tool()
+@_expected_errors
 def get_indicator_raw(varcd: str) -> dict:
     """Debug tool: return the raw, unparsed INE JSON response for a varcd."""
     return client.download(varcd)
 
 
 @mcp.tool()
+@_expected_errors
 def get_median_price_per_m2(
     region: str | None = None,
     start_year: int | None = None,
@@ -53,6 +73,7 @@ def get_median_price_per_m2(
 
 
 @mcp.tool()
+@_expected_errors
 def get_number_of_sales(
     region: str | None = None,
     start_year: int | None = None,
@@ -64,6 +85,7 @@ def get_number_of_sales(
 
 
 @mcp.tool()
+@_expected_errors
 def get_yoy_change(indicator: str, region: str | None = None) -> list[dict]:
     """Year-over-year percent change for an indicator (by varcd or KNOWN_INDICATORS name)."""
     df = analytics.get_yoy_change(client, indicator, region=region)
@@ -71,6 +93,7 @@ def get_yoy_change(indicator: str, region: str | None = None) -> list[dict]:
 
 
 @mcp.tool()
+@_expected_errors
 def compare_regions(indicator: str, regions: list[str], period: str = "latest") -> list[dict]:
     """Side-by-side comparison of an indicator across regions for one period ('latest' by default)."""
     df = analytics.compare_regions(client, indicator, regions, period=period)
@@ -78,6 +101,7 @@ def compare_regions(indicator: str, regions: list[str], period: str = "latest") 
 
 
 @mcp.tool()
+@_expected_errors
 def compute_price_to_income(
     price_varcd_or_name: str,
     income_varcd: str,
@@ -92,6 +116,7 @@ def compute_price_to_income(
 
 
 @mcp.tool()
+@_expected_errors
 def get_buyer_origin_premium(
     region: str,
     start_year: int | None = None,

@@ -1,3 +1,4 @@
+import difflib
 import os
 import re
 import threading
@@ -317,9 +318,16 @@ class INEClient:
         # Filter before building the DataFrame so an empty result is caught
         # here, with an error naming the filter that emptied it.
         if region is not None:
+            available_regions = sorted({r["geo_name"] for r in rows if r["geo_name"] is not None})
             rows = [r for r in rows if r["geo_name"] == region]
             if not rows:
-                raise ValueError(f"No data for {name_or_varcd!r} in region {region!r}")
+                suggestions = difflib.get_close_matches(region, available_regions, n=5, cutoff=0.6)
+                raise ValueError(
+                    f"No data for {name_or_varcd!r} in region {region!r}; region must match "
+                    f"an INE geo_name exactly ({len(available_regions)} available, e.g. "
+                    f"municipalities and NUTS regions -- not parishes)"
+                    + (f". Did you mean: {suggestions}?" if suggestions else "")
+                )
         if dim3 is not None:
             available = sorted({r["dim_3"] for r in rows if r["dim_3"] is not None})
             rows = [r for r in rows if r["dim_3"] == dim3]
