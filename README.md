@@ -38,6 +38,7 @@ instead.
 | `get_yoy_change(indicator, region)` | Year-over-year % change |
 | `compare_regions(indicator, regions, period)` | Side-by-side region comparison |
 | `compute_price_to_income(price_varcd_or_name, income_varcd, region, dwelling_size_m2)` | Affordability ratio - you supply an income indicator's varcd |
+| `get_buyer_origin_premium(region, start_year, end_year)` | % premium foreign buyers pay over national buyers on median price per m2, per period. A price-gap proxy, not a foreign-buyer share - INE publishes no sales volume split by buyer origin |
 | `get_listing_price_context(html_path, start_year, end_year)` | Parse a saved idealista listing page and return its location plus the municipality's median price per m2 (INE has no parish-level prices) |
 
 ### Resources
@@ -218,6 +219,8 @@ alongside a question:
   catching up?"
 - "Show me the number of sales trend for [region] - is demand rising or
   falling?"
+- "Is [municipality] seeing strong demand from foreign buyers?" (answered
+  via the foreign-vs-national price premium, not buyer counts)
 
 **Affordability / investment framing**
 - "If I make €X/year, what price-to-income ratio would a €Y property in

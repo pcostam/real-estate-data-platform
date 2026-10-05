@@ -20,3 +20,4 @@ ingestion/Eurostat
 ingestion/PORDATA
 Silver/
 Spark_Jobs/
+.claude/settings.local.json
