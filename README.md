@@ -14,17 +14,19 @@ PySpark ingestion layer.
 | --- | --- | --- |
 | `median_price_per_m2` | `0012239` | Median sale price, EUR/m2, quarterly, by NUTS region |
 | `number_of_sales` | `0014363` | Housing sales, trailing 12 months, quarterly, by NUTS region |
-| `housing_price_index` (IPHab) | `0014765` | Base 2025, quarterly; `dim_3='H1'` for the headline Total |
-| `consumer_price_index` (IPC) | `0014640` | Base 2025, monthly level index (for deflating nominal prices); `dim_3='001'` for Total exceto habitacao |
+| `housing_price_index` (IPHab) | `0014765` | Base 2025, quarterly, Portugal only (no regional breakdown); `dim_3='H1'` for the headline Total |
+| `consumer_price_index` (IPC) | `0014640` | Base 2025, monthly level index (for deflating nominal prices); defaults to `dim_3='T'` (headline), pass `dim3='001'` for Total exceto habitacao |
 
 See [ingestion/indicators.py](ingestion/indicators.py) for the full registry
 (descriptions, frequency, dimension notes).
 
-All four have a `dim_3` breakdown dimension (e.g. buyer origin, dwelling
-category, consumption aggregate). Tools filter to each indicator's
-registered "Total" `dim_3` by default so results aren't silently mixed
-across categories - pass `dim3` explicitly to see a specific breakdown
-instead.
+Three of the four have a `dim_3` breakdown dimension (buyer tax residence,
+dwelling category, consumption aggregate); `number_of_sales` has none. Tools
+filter to each indicator's registered "Total" `dim_3` by default so results
+aren't silently mixed across categories - pass `dim3` explicitly to see a
+specific breakdown instead. See
+[Dimensions and categories](#dimensions-and-categories) for what each code
+means.
 
 ### Tools
 
@@ -60,6 +62,64 @@ single call that returns a full time series. So:
   that).
 - `get_yoy_change` does two fetches: the latest period, then the matching
   period exactly one year earlier (resolved the same way).
+
+### Dimensions and categories
+
+Every INE indicator is a grid: each value sits at one category of each
+dimension. Pick one category per dimension and you get exactly one number.
+
+- `dim 1` - period (quarter or month)
+- `dim 2` - geography
+- `dim 3` - an indicator-specific breakdown (not every indicator has one)
+
+| varcd | dim 1 | dim 2 | dim 3 |
+| --- | --- | --- | --- |
+| `0012239` median price/m2 | Quarter, 2019 Q1 onwards | NUTS 2024, 97 areas (`PT` Portugal -> `1` Continente -> `11` Norte -> `112` Cavado -> `1120303` Braga) | Buyer's tax residence (domicilio fiscal): `T` Total, `1` Territorio nacional, `2` Estrangeiro (`21` Uniao Europeia, `22` Restantes paises) |
+| `0014363` number of sales | Quarter, 2019 Q4 onwards | NUTS 2024, 931 areas (down to every municipality) | none |
+| `0014765` IPHab | Quarter, 2009 Q1 onwards | `PT` only | Dwelling category: `H1` Total, `H11` Novos, `H12` Existentes |
+| `0014640` IPC | **Month**, 1948 onwards | `PT` Portugal, `1` Continente | Special aggregates: `T` Total, `001` Total exceto habitacao, `002`-`007` exclusions/food/energy components, `008` Bens, `009` Servicos |
+
+Things to watch when working with these:
+
+- **Categories are hierarchical - don't sum across levels.** In `0012239`,
+  `T` already contains `1` and `2`, and `2` contains `21` and `22`.
+  Geography nests the same way (Cavado is inside Norte, inside Continente).
+  The metadata's `categ_nivel` gives each category's level; compare places
+  at the same level.
+- **Codes are per indicator.** `T` is the total in `0012239` and `0014640`,
+  but `H1` in `0014765`. Always check the metadata.
+- **Buyer tax residence is not nationality.** A foreign national living in
+  Portugal counts as `1`; a Portuguese emigrant buying from abroad counts as
+  `2`.
+- **A blank `valor` means not published**, not zero (e.g. foreign-buyer rows
+  in smaller regions).
+- **Coverage differs.** IPHab is national only and IPC is monthly, so neither
+  lines up directly with a regional quarterly series.
+
+#### Looking up dimensions yourself
+
+The metadata endpoint `pindicaMeta.jsp` describes any indicator. In
+PowerShell:
+
+```powershell
+$m = (Invoke-RestMethod 'https://www.ine.pt/ine/json_indicador/pindicaMeta.jsp?varcd=0012239&lang=PT')[0]
+$m.Dimensoes.Descricao_Dim   # what each dimension is
+$m.Dimensoes.Categoria_Dim[0].PSObject.Properties | Where-Object Name -like 'Dim_Num3_*' | ForEach-Object { $_.Value } | Select-Object cat_id, categ_dsg, categ_nivel   # categories of dim 3 (change the 3 for others)
+```
+
+`$m.UnidadeMedida`, `$m.PrimeiroPeriodo` and `$m.UltimoPeriodo` give the
+unit and the available range.
+
+Then pass one `cat_id` per dimension as `Dim1`/`Dim2`/`Dim3` to `pindica.jsp`
+(omit one to get every category of it):
+
+```powershell
+(Invoke-RestMethod 'https://www.ine.pt/ine/json_indicador/pindica.jsp?op=2&varcd=0012239&Dim1=S5A20261&Dim2=112&Dim3=T&lang=PT')[0].Dados.PSObject.Properties.Value | Select-Object geodsg, dim_3, valor
+```
+
+Quote the URL - PowerShell treats an unquoted `&` as an operator. Results
+are keyed by period label under `Dados` (e.g. `1.º Trimestre de 2026`),
+hence the `.PSObject.Properties`.
 
 ## Prerequisites
 
@@ -220,7 +280,8 @@ alongside a question:
 - "Show me the number of sales trend for [region] - is demand rising or
   falling?"
 - "Is [municipality] seeing strong demand from foreign buyers?" (answered
-  via the foreign-vs-national price premium, not buyer counts)
+  via the foreign-vs-national price premium, not buyer counts; "foreign"
+  means tax-resident abroad, not foreign nationality)
 
 **Affordability / investment framing**
 - "If I make €X/year, what price-to-income ratio would a €Y property in
